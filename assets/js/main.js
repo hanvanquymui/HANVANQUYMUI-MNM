@@ -1,6 +1,6 @@
 const API_URL = "http://127.0.0.1:8000"; 
 
-// --- 1. KHỞI TẠO ỨNG DỤNG ---
+// --- 1. KHỞI TẠO ---
 document.addEventListener('DOMContentLoaded', () => {
     checkLoginStatus();
 });
@@ -10,18 +10,15 @@ function checkLoginStatus() {
     const role = localStorage.getItem('user_role');
     
     if (token) {
-        if (role === 'admin') {
-            renderAdminDashboard(); 
-        } else {
-            renderDashboard(); 
-        }
+        if (role === 'admin') renderAdminDashboard();
+        else renderDashboard();
     } else {
         renderLogin();
     }
 }
 
 // ==========================================
-//      PHẦN ADMIN (GIỮ NGUYÊN 100%)
+//      PHẦN ADMIN (LOGIC MỚI: DUYỆT THANH TOÁN)
 // ==========================================
 
 async function renderAdminDashboard() {
@@ -31,25 +28,19 @@ async function renderAdminDashboard() {
     app.innerHTML = `
         <div class="col-12">
             <div class="d-flex justify-content-between align-items-center mb-4 p-3 bg-dark text-white rounded">
-                <div>
-                    <h3 class="m-0">🛡️ Admin Dashboard</h3>
-                    <small>Xin chào: ${email}</small>
-                </div>
+                <div><h3 class="m-0">🛡️ Admin Dashboard</h3><small>Xin chào: ${email}</small></div>
                 <button id="btnLogout" class="btn btn-danger btn-sm">Đăng Xuất</button>
             </div>
-            
             <ul class="nav nav-tabs mb-3" id="adminTabs">
                 <li class="nav-item"><button class="nav-link active fw-bold" onclick="switchAdminTab('bookings')">📅 Quản Lý Đơn Hàng</button></li>
                 <li class="nav-item"><button class="nav-link fw-bold text-success" onclick="switchAdminTab('services')">💆‍♀️ Quản Lý Dịch Vụ</button></li>
             </ul>
-
             <div id="tab-bookings" class="card shadow">
                 <div class="card-body">
-                    <h5 class="card-title text-primary">Danh sách đặt chỗ</h5>
+                    <h5 class="card-title text-primary">Kiểm Duyệt Đơn Hàng & Thanh Toán</h5>
                     <div id="admin-bookings-content" class="table-responsive"><div class="text-center"><div class="spinner-border text-primary"></div></div></div>
                 </div>
             </div>
-
             <div id="tab-services" class="card shadow" style="display:none;">
                 <div class="card-body">
                     <div class="d-flex justify-content-between mb-3">
@@ -60,7 +51,6 @@ async function renderAdminDashboard() {
                 </div>
             </div>
         </div>
-
         <div class="modal fade" id="addServiceModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content"><div class="modal-header bg-success text-white"><h5 class="modal-title">Thêm Dịch Vụ Mới</h5><button class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body">
             <form id="formAddService" onsubmit="handleCreateService(event)">
                 <div class="mb-3"><label>Tên dịch vụ:</label><input type="text" id="svName" class="form-control" required></div>
@@ -71,7 +61,6 @@ async function renderAdminDashboard() {
             </form>
         </div></div></div></div>
     `;
-
     document.getElementById('btnLogout').addEventListener('click', handleLogout);
     loadAllBookingsForAdmin();
     loadAdminServices(); 
@@ -81,7 +70,6 @@ window.switchAdminTab = function(tabName) {
     const tabBookings = document.getElementById('tab-bookings');
     const tabServices = document.getElementById('tab-services');
     const btns = document.querySelectorAll('#adminTabs .nav-link');
-
     if (tabName === 'bookings') {
         tabBookings.style.display = 'block'; tabServices.style.display = 'none';
         btns[0].classList.add('active'); btns[1].classList.remove('active');
@@ -91,6 +79,76 @@ window.switchAdminTab = function(tabName) {
     }
 }
 
+// --- HÀM QUAN TRỌNG: LOAD ĐƠN HÀNG ADMIN (LOGIC MỚI) ---
+async function loadAllBookingsForAdmin() {
+    const container = document.getElementById('admin-bookings-content');
+    try {
+        const res = await fetch(`${API_URL}/api/v1/admin/all-bookings`);
+        if (!res.ok) return container.innerHTML = '<p class="text-danger">Lỗi quyền!</p>';
+        const bookings = await res.json();
+        if (bookings.length === 0) return container.innerHTML = '<p>Chưa có đơn hàng.</p>';
+        
+        let html = `<table class="table table-hover table-bordered align-middle text-center"><thead class="table-light"><tr><th>#ID</th><th>Khách</th><th>Dịch Vụ</th><th>Ngày</th><th>Trạng Thái Đơn</th><th>Trạng Thái Tiền</th><th>Hành Động</th></tr></thead><tbody>`;
+        
+        bookings.forEach(b => {
+            // Logic màu sắc trạng thái
+            let statusBadge = b.status === 'Đã hủy' ? 'bg-danger' : (b.status === 'Đã xác nhận' ? 'bg-success' : 'bg-warning text-dark');
+            
+            // Logic hiển thị trạng thái thanh toán & Nút hành động
+            let paymentBadge = '';
+            let actionBtn = '';
+
+            if (b.payment_status === 'Đã thanh toán') {
+                paymentBadge = '<span class="badge bg-success">💰 Đã nhận tiền</span>';
+                actionBtn = '<span class="text-success fw-bold">✓ Hoàn tất</span>';
+            } else if (b.payment_status === 'Chờ xác nhận') {
+                paymentBadge = '<span class="badge bg-warning text-dark">⏳ Chờ duyệt tiền</span>';
+                // Hiện nút duyệt tiền cho Admin
+                actionBtn = `<button class="btn btn-sm btn-outline-success fw-bold" onclick="adminConfirmPayment(${b.id})">✅ Duyệt Tiền</button>`;
+            } else {
+                paymentBadge = '<span class="badge bg-secondary">Chưa TT</span>';
+                // Nếu chưa thanh toán, Admin chỉ duyệt đơn thôi
+                if (b.status === 'Chờ xác nhận') {
+                    actionBtn = `<button class="btn btn-sm btn-primary" onclick="adminConfirmBooking(${b.id})">Duyệt Đơn</button>`; 
+                } else if (b.status === 'Đã hủy') {
+                    actionBtn = '<span class="text-muted">Đã hủy</span>';
+                } else {
+                    actionBtn = '<span class="text-muted">--</span>';
+                }
+            }
+
+            html += `<tr>
+                <td class="fw-bold">${b.id}</td>
+                <td><small>${b.user_email}</small></td>
+                <td class="text-primary">${b.service_name}</td>
+                <td>${b.booking_time.replace('T',' ')}</td>
+                <td><span class="badge ${statusBadge}">${b.status}</span></td>
+                <td>${paymentBadge}</td>
+                <td>${actionBtn}</td>
+            </tr>`;
+        });
+        container.innerHTML = html + `</tbody></table>`;
+    } catch(e) { container.innerHTML = '<p class="text-danger">Lỗi kết nối server.</p>'; }
+}
+
+// Hàm Admin xác nhận tiền
+window.adminConfirmPayment = async function(id) {
+    if(!confirm("Xác nhận đã nhận được tiền từ khách hàng này?")) return;
+    try {
+        const res = await fetch(`${API_URL}/api/v1/admin/confirm-payment/${id}`, { method: 'PUT' });
+        if(res.ok) { alert("Đã duyệt thanh toán thành công!"); loadAllBookingsForAdmin(); }
+        else { alert("Lỗi khi duyệt tiền!"); }
+    } catch(e) { alert("Lỗi kết nối."); }
+}
+
+// Hàm Admin duyệt đơn (giữ nguyên logic cũ nếu cần)
+window.adminConfirmBooking = async function(id) {
+    // Lưu ý: Logic duyệt đơn cũ của bạn có thể nằm ở nút khác, ở đây tôi demo duyệt tiền là chính.
+    // Nếu bạn muốn tích hợp, cần check lại API duyệt đơn. 
+    alert("Chức năng duyệt đơn (không phải duyệt tiền) đang được cập nhật."); 
+}
+
+// ... (Các hàm loadAdminServices, handleCreateService, handleDeleteService GIỮ NGUYÊN) ...
 async function loadAdminServices() {
     const container = document.getElementById('admin-services-content');
     try {
@@ -124,25 +182,9 @@ window.handleDeleteService = async function(id) {
     try { const res = await fetch(`${API_URL}/api/v1/services/${id}`, { method: 'DELETE' }); if(res.ok) { alert("Đã xóa!"); loadAdminServices(); } else { alert("Lỗi xóa."); } } catch(e) { alert("Lỗi kết nối."); }
 }
 
-async function loadAllBookingsForAdmin() {
-    const container = document.getElementById('admin-bookings-content');
-    try {
-        const res = await fetch(`${API_URL}/api/v1/admin/all-bookings`);
-        if (!res.ok) return container.innerHTML = '<p class="text-danger">Lỗi quyền!</p>';
-        const bookings = await res.json();
-        if (bookings.length === 0) return container.innerHTML = '<p>Chưa có đơn hàng.</p>';
-        let html = `<table class="table table-hover table-bordered align-middle"><thead class="table-light"><tr><th>#ID</th><th>Khách</th><th>Dịch Vụ</th><th>Nhân Viên</th><th>Ngày</th><th>Trạng Thái</th><th>TT</th></tr></thead><tbody>`;
-        bookings.forEach(b => {
-            let statusBadge = b.status === 'Đã hủy' ? 'bg-danger' : (b.status === 'Đã xác nhận' ? 'bg-success' : 'bg-warning text-dark');
-            let paymentBadge = b.payment_status === 'Đã thanh toán' ? '<span class="badge bg-success">Đã TT</span>' : '<span class="badge bg-secondary">Chưa TT</span>';
-            html += `<tr><td class="fw-bold text-center">${b.id}</td><td>${b.user_email||'Ẩn'}</td><td class="text-primary">${b.service_name}</td><td>${b.provider_name||'Mặc định'}</td><td>${b.booking_time.replace('T',' ')}</td><td><span class="badge ${statusBadge}">${b.status}</span></td><td>${paymentBadge}</td></tr>`;
-        });
-        container.innerHTML = html + `</tbody></table>`;
-    } catch(e) { container.innerHTML = '<p class="text-danger">Lỗi kết nối server.</p>'; }
-}
 
 // ==========================================
-//      PHẦN USER (CẬP NHẬT BANNER ẢNH MỚI)
+//      PHẦN USER (CẬP NHẬT LOGIC HIỂN THỊ TRẠNG THÁI TIỀN)
 // ==========================================
 
 async function renderDashboard() {
@@ -152,7 +194,7 @@ async function renderDashboard() {
     app.innerHTML = `
         <nav class="navbar navbar-expand-lg navbar-light bg-white shadow-sm sticky-top">
             <div class="container">
-                <a class="navbar-brand fw-bold text-success fs-3" href="#" onclick="switchUserTab('home')">🌱 SPA </a>
+                <a class="navbar-brand fw-bold text-success fs-3" href="#" onclick="switchUserTab('home')">🌱 SPA LOGO</a>
                 <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav"><span class="navbar-toggler-icon"></span></button>
                 <div class="collapse navbar-collapse" id="navbarNav">
                     <ul class="navbar-nav me-auto mb-2 mb-lg-0">
@@ -205,25 +247,16 @@ window.switchUserTab = function(tabName) {
 
 // --- HÀM TRANG CHỦ MỚI (CÓ ẢNH NỀN) ---
 function renderUserHome() {
-    // URL ảnh mẫu Spa. Bạn có thể thay link ảnh khác vào đây.
     const bannerUrl = "https://images.unsplash.com/photo-1540555700478-4be289fbecef?ixlib=rb-4.0.3&auto=format&fit=crop&w=1200&q=80";
-
     document.getElementById('main-content').innerHTML = `
         <div class="p-5 mb-4 rounded-3 text-white text-center shadow position-relative" 
              style="background: linear-gradient(rgba(0, 0, 0, 0.5), rgba(0, 0, 0, 0.5)), url('${bannerUrl}'); 
-                    background-size: cover; 
-                    background-position: center; 
-                    height: 400px; 
-                    display: flex; 
-                    align-items: center; 
-                    justify-content: center; 
-                    flex-direction: column;">
-            
+                    background-size: cover; background-position: center; height: 400px; 
+                    display: flex; align-items: center; justify-content: center; flex-direction: column;">
             <h1 class="display-4 fw-bold" style="text-shadow: 2px 2px 4px rgba(0,0,0,0.7);">Chào mừng đến với Spa Hàn Phượng</h1>
             <p class="fs-4 mb-4" style="text-shadow: 1px 1px 3px rgba(0,0,0,0.7);">Thư giãn - Làm đẹp - Chăm sóc sức khỏe toàn diện</p>
             <button class="btn btn-success btn-lg fw-bold px-5 shadow" onclick="switchUserTab('services')">Đặt Dịch Vụ Ngay</button>
         </div>
-
         <div class="row text-center mt-4">
             <div class="col-md-4"><div class="card p-4 shadow-sm border-0 h-100"><h3>🏆</h3><h5>Chất lượng cao</h5><p class="text-muted">Đội ngũ chuyên nghiệp.</p></div></div>
             <div class="col-md-4"><div class="card p-4 shadow-sm border-0 h-100"><h3>🌿</h3><h5>Sản phẩm tự nhiên</h5><p class="text-muted">An toàn cho da.</p></div></div>
@@ -271,14 +304,32 @@ async function loadUserHistoryTable() {
         const res = await fetch(`${API_URL}/api/v1/bookings/my-bookings/${email}`);
         const data = await res.json();
         if(data.length === 0) { container.innerHTML = '<div class="p-4 text-center text-muted">Bạn chưa đặt dịch vụ nào.</div>'; return; }
+        
         let html = `<table class="table table-hover align-middle mb-0"><thead class="table-light"><tr><th>Dịch Vụ</th><th>Ngày Giờ</th><th>Trạng Thái</th><th>Hành Động</th></tr></thead><tbody>`;
+        
         data.forEach(b => {
             let actionBtns = '';
-            if (b.payment_status === 'Đã thanh toán') actionBtns += '<span class="badge bg-success">✅ Đã TT</span>';
-            else if (b.status !== 'Đã hủy') actionBtns += `<button class="btn btn-sm btn-success me-1" onclick="payBooking(${b.id})">💸 TT</button>`;
             
-            if (b.status !== 'Đã hủy' && b.status !== 'Hoàn thành') actionBtns += `<button class="btn btn-sm btn-outline-danger" onclick="cancelBooking(${b.id})">❌ Hủy</button>`;
-            else if (b.status === 'Đã hủy') actionBtns += '<span class="text-muted small">Đã hủy</span>';
+            // LOGIC MỚI CHO KHÁCH HÀNG:
+            // 1. Nếu đã thanh toán: Hiện Badge Xanh
+            if (b.payment_status === 'Đã thanh toán') {
+                actionBtns += '<span class="badge bg-success">✅ Đã TT</span>';
+            } 
+            // 2. Nếu đang chờ xác nhận: Hiện Badge Vàng
+            else if (b.payment_status === 'Chờ xác nhận') {
+                actionBtns += '<span class="badge bg-warning text-dark">⏳ Đang chờ duyệt TT</span>';
+            }
+            // 3. Nếu chưa thanh toán: Hiện nút "TT" để bấm
+            else if (b.status !== 'Đã hủy') {
+                actionBtns += `<button class="btn btn-sm btn-success me-1" onclick="payBooking(${b.id})">💸 TT</button>`;
+            }
+            
+            // Logic Hủy đơn
+            if (b.status !== 'Đã hủy' && b.status !== 'Hoàn thành' && b.payment_status !== 'Đã thanh toán') {
+                actionBtns += `<button class="btn btn-sm btn-outline-danger" onclick="cancelBooking(${b.id})">❌ Hủy</button>`;
+            } else if (b.status === 'Đã hủy') {
+                actionBtns += '<span class="text-muted small">Đã hủy</span>';
+            }
 
             html += `<tr><td><span class="fw-bold text-primary">${b.service_name}</span><br><small class="text-muted">${b.provider_name}</small></td><td>${b.booking_time.replace('T', ' ')}</td><td><span class="badge ${b.status==='Đã hủy'?'bg-danger':(b.status==='Đã xác nhận'?'bg-primary':'bg-warning text-dark')}">${b.status}</span></td><td>${actionBtns}</td></tr>`;
         });
@@ -321,7 +372,7 @@ async function loadServices() {
                 ${s.map(i => `
                     <div class="col-md-4 mb-4">
                         <div class="card h-100 shadow-sm hover-shadow border-0">
-                            <img src="${i.image}" class="card-img-top" style="height:200px;object-fit:cover" onerror="this.src='https://via.placeholder.com/200'">
+                            <img src="${i.image}" class="card-img-top" style="height:200px;object-fit:cover" onerror="this.src='https://via.placeholder.com/150'">
                             <div class="card-body text-center">
                                 <h5 class="card-title fw-bold">${i.name}</h5>
                                 <p class="text-danger fw-bold fs-5">${i.price}</p>
@@ -343,7 +394,22 @@ window.submitBooking = async function() { const t=document.getElementById('booki
 
 async function renderHistory() { renderUserProfile(); }
 async function cancelBooking(id) { if(!confirm("Hủy đơn này?")) return; await fetch(`${API_URL}/api/v1/bookings/${id}/cancel`, {method: 'PUT'}); alert("Đã hủy."); renderUserProfile(); checkUnreadNotifications(); }
-async function payBooking(id) { if(!confirm("Thanh toán?")) return; await fetch(`${API_URL}/api/v1/payments/${id}/pay`,{method:'PUT'}); alert("Thanh toán xong!"); renderUserProfile(); checkUnreadNotifications(); }
+
+// --- LOGIC MỚI: THANH TOÁN (GỬI YÊU CẦU CHỜ DUYỆT) ---
+async function payBooking(id) { 
+    if(!confirm("Xác nhận đã chuyển khoản? Hệ thống sẽ gửi yêu cầu duyệt tới Admin.")) return; 
+    try {
+        const res = await fetch(`${API_URL}/api/v1/payments/${id}/pay`,{method:'PUT'}); 
+        if (res.ok) {
+            alert("Đã gửi yêu cầu! Vui lòng chờ Admin xác nhận."); 
+            renderUserProfile(); 
+            checkUnreadNotifications(); 
+        } else {
+            alert("Lỗi thanh toán.");
+        }
+    } catch(e) { alert("Lỗi kết nối."); }
+}
+
 async function checkUnreadNotifications() { const email = localStorage.getItem('user_email'); const badge = document.getElementById('notiBadge'); if (!badge) return; try { const res = await fetch(`${API_URL}/api/v1/notifications/unread/${email}`); const data = await res.json(); if(data.unread_count > 0) { badge.style.display = 'block'; badge.innerText = data.unread_count > 9 ? '9+' : data.unread_count; } else { badge.style.display = 'none'; } } catch(e) { badge.style.display = 'none'; } }
 async function loadNotifications() { const email = localStorage.getItem('user_email'); const list = document.getElementById('notiList'); list.innerHTML = 'Loading...'; try { const res = await fetch(`${API_URL}/api/v1/notifications/${email}`); const notis = await res.json(); list.innerHTML = notis.length ? notis.map(n => `<li><div class="dropdown-item p-2 border-bottom" style="background-color: ${n.is_read?'white':'#fffbe3'}"><p class="m-0 small text-dark fw-bold">${n.message}</p><small class="text-muted">${n.created_at.replace('T',' ')}</small></div></li>`).join('') : '<li><p class="text-center m-2">Không có thông báo.</p></li>'; await fetch(`${API_URL}/api/v1/notifications/read/${email}`, { method: 'PUT' }); document.getElementById('notiBadge').style.display = 'none'; } catch(e) { list.innerHTML = 'Lỗi tải.'; } }
 let currentReviewService=""; async function openReviewModal(n){currentReviewService=n;document.getElementById('reviewServiceName').innerText=n;new bootstrap.Modal(document.getElementById('reviewModal')).show();loadReviews(n);}
