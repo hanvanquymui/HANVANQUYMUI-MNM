@@ -37,8 +37,9 @@ def admin_confirm_payment(booking_id: int, db: Session = Depends(get_db)):
         transaction_id=f"ADMIN-{str(uuid.uuid4())[:8]}" # Mã giao dịch giả lập
     )
     db.add(new_payment)
-
+ 
     # 4. Gửi thông báo cho khách hàng
+    
     msg = f"Admin đã xác nhận thanh toán cho đơn hàng '{booking.service_name}'. Cảm ơn quý khách!"
     new_noti = Notification(
         user_email=booking.user_email,
